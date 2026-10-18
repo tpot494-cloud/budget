@@ -28,7 +28,8 @@ export function setup() {
       <button type="button" class="btn btn-outline" id="import">Import</button>
     </div>
     <input type="file" id="importFile" accept="application/json,.json" hidden>
-    <span class="help">Saves one file to your phone's Downloads. Keep a copy somewhere safe: it's the only copy of your data outside this app.</span>
+    <span class="help">Opens your phone's share menu so you can save the backup file to Files, Drive or email. Keep a copy somewhere safe: it's the only copy of your data outside this app.</span>
+    <button type="button" class="link-btn small" id="download">Download the file instead</button>
   </section>`;
 
   const money = `<section class="card stack">
@@ -40,11 +41,9 @@ export function setup() {
     <span class="help">Only reliable pay goes here. Log bonuses and one-off money from the Dashboard.</span>
   </section>`;
 
-  const savings = `<section class="card stack">
-    <h2>Savings</h2>
-    ${moneyField('savings', 'Current savings', st.savings)}
-    <span class="help">Update this whenever you check your bank.</span>
-  </section>`;
+  const savings = `<a class="card list-row plain" href="#/savings">
+    <span class="stack-2"><span class="strong big-label">Savings</span><span class="muted small">Add or take out money, or update from your bank</span></span>
+    <span class="row-gap"><span class="num strong">${fmt(C.savingsTotal(s))}</span>${icon.chevron}</span></a>`;
 
   const billCount = C.billsForMonth(s, mk).length;
   const billsRow = `<a class="card list-row plain" href="#/bills">
@@ -88,7 +87,7 @@ export function setup() {
       }
     });
     // Money fields save when you leave the field.
-    for (const [sel, key] of [['#pay', 'pay'], ['#savings', 'savings']]) {
+    for (const [sel, key] of [['#pay', 'pay']]) {
       $(sel).addEventListener('change', e => {
         const v = parseMoney(e.target.value);
         if (v === null && e.target.value.trim() !== '') return toast('Enter a number');
@@ -97,7 +96,14 @@ export function setup() {
         toast('Saved');
       });
     }
-    $('#export').addEventListener('click', () => { exportBackup(); toast('Backup saved to Downloads'); go('/setup'); });
+    const doExport = async forceDownload => {
+      const how = await exportBackup({ forceDownload });
+      if (how === 'cancelled') return;
+      toast(how === 'shared' ? 'Backup shared' : 'Backup saved to Downloads');
+      go('/setup');
+    };
+    $('#export').addEventListener('click', () => doExport(false));
+    $('#download').addEventListener('click', () => doExport(true));
     $('#import').addEventListener('click', () => $('#importFile').click());
     $('#importFile').addEventListener('change', async e => {
       const file = e.target.files[0];
@@ -207,7 +213,7 @@ export function goalForm(id) {
     <div class="field"><label for="name">Name</label><input id="name" type="text" value="${esc(g.name)}" placeholder="Emergency fund"></div>
     ${moneyField('target', 'Target amount', g.target)}
     <div class="field"><label for="date">Reach it by</label><input id="date" type="date" value="${g.targetDate}" min="${C.todayStr()}"></div>
-    <span class="help">Progress is measured against your total savings balance.</span>
+    <span class="help">Progress is measured against your savings total.</span>
     <button type="button" class="btn btn-primary" id="save">${existing ? 'Save changes' : 'Add goal'}</button>
     ${existing ? `<button type="button" class="btn btn-danger" id="del">Delete goal</button>` : ''}
   </main>`;

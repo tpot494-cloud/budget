@@ -11,9 +11,11 @@ export function emptyState() {
     settings: {
       pay: 0,                 // take-home pay per paycheck, in cents
       payFrequency: 'monthly', // 'weekly' | 'biweekly' | 'monthly'
-      savings: 0,             // current savings, in cents
+      savings: 0,             // savings balance from the bank, in cents (see savingsAsOf)
+      savingsAsOf: null,      // when that balance was entered (ISO timestamp); null = from the start
       lastBackupAt: null,     // ISO timestamp of the last export
       lastPaidWith: 'debit',  // remembered for the add-purchase form
+      debtPlan: { amount: 0, freq: 'weekly', strategy: 'rate', focusId: null, lumpAmount: 0, lumpDate: '' },
     },
     categories: [
       { id: uid(), name: 'Groceries', budget: 0, archived: false },
@@ -27,7 +29,9 @@ export function emptyState() {
     purchases: [],    // { id, date, amount, categoryId, note, paidWith:'debit'|'card' }
     incomes: [],      // { id, date, amount, source:'bonus'|'sale'|'other', note, allocation:'savings'|'spending' }
     goals: [],        // { id, name, target, targetDate }
-    debts: [],        // reserved for the debt payoff view
+    debts: [],        // { id, name, type, balance (from statement), asOf, apr (%), minPayment, billId }
+    debtPayments: [], // extra payments beyond the monthly bill: { id, debtId, date, amount }
+    savingsLog: [],   // money moved in or out of savings: { id, date, amount, kind:'deposit'|'withdrawal', note, createdAt }
   };
 }
 
@@ -76,8 +80,15 @@ export function migrate(data) {
   const base = emptyState();
   const out = { ...base, ...data };
   out.settings = { ...base.settings, ...(data.settings || {}) };
-  for (const k of ['categories', 'bills', 'billPayments', 'purchases', 'incomes', 'goals', 'debts']) {
+  out.settings.debtPlan = { ...base.settings.debtPlan, ...((data.settings || {}).debtPlan || {}) };
+  for (const k of ['categories', 'bills', 'billPayments', 'purchases', 'incomes', 'goals', 'debts', 'debtPayments', 'savingsLog']) {
     out[k] = Array.isArray(data[k]) ? data[k] : [];
+  }
+  // Data from before v1.2: the savings number already includes everything up to now,
+  // including extra income that was added to it, so start counting new entries from now.
+  if (!('savingsAsOf' in (data.settings || {}))) {
+    out.settings.savingsAsOf = new Date().toISOString();
+    out.incomes = out.incomes.map(i => (i.allocation === 'savings' ? { ...i, inBalance: true } : i));
   }
   // A backup with no categories key at all keeps the defaults; an empty list stays empty.
   if (!('categories' in data)) out.categories = base.categories;
@@ -87,22 +98,43 @@ export function migrate(data) {
 
 // ---------- Backup ----------
 
-export function exportBackup() {
+// Uses the phone's share sheet when it can (Save to Files on iPhone; Drive, email
+// or Files on Android). Falls back to a normal download. Returns how it was saved.
+export async function exportBackup({ forceDownload = false } = {}) {
   const stamp = new Date();
-  state.settings.lastBackupAt = stamp.toISOString();
-  save();
-  const payload = { app: 'budget-app', exportedAt: stamp.toISOString(), data: state };
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  const d = stamp;
   const pad = n => String(n).padStart(2, '0');
+  const name = `budget-backup-${stamp.getFullYear()}-${pad(stamp.getMonth() + 1)}-${pad(stamp.getDate())}.json`;
+  const payload = { app: 'budget-app', exportedAt: stamp.toISOString(), data: { ...state, settings: { ...state.settings, lastBackupAt: stamp.toISOString() } } };
+  const text = JSON.stringify(payload, null, 2);
+
+  if (!forceDownload && typeof File !== 'undefined' && navigator.canShare) {
+    const file = new File([text], name, { type: 'application/json' });
+    if (navigator.canShare({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file], title: 'Budget backup' });
+        markBackedUp(stamp);
+        return 'shared';
+      } catch (e) {
+        if (e && e.name === 'AbortError') return 'cancelled';
+        // Any other share failure: fall through to a download.
+      }
+    }
+  }
+  const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+  const a = document.createElement('a');
   a.href = url;
-  a.download = `budget-backup-${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}.json`;
+  a.download = name;
   document.body.appendChild(a);
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 2000);
+  markBackedUp(stamp);
+  return 'downloaded';
+}
+
+function markBackedUp(stamp) {
+  state.settings.lastBackupAt = stamp.toISOString();
+  save();
 }
 
 // Returns a short summary for the confirm prompt, or throws if the file isn't a backup.

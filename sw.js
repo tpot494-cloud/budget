@@ -2,7 +2,7 @@
 // IMPORTANT: when you upload a new version of any file, VERSION must change too
 // (I'll do this for you in each update). That's how the phone knows to refresh.
 
-const VERSION = 'v1.0.0';
+const VERSION = 'v1.2.0';
 const CACHE = 'budget-' + VERSION;
 const FILES = [
   './',
@@ -16,6 +16,9 @@ const FILES = [
   'views-spending.js',
   'views-bills.js',
   'views-setup.js',
+  'views-debt.js',
+  'calc-debt.js',
+  'views-savings.js',
   'manifest.webmanifest',
   'manrope.woff2',
   'space-grotesk.woff2',
@@ -25,7 +28,11 @@ const FILES = [
 ];
 
 self.addEventListener('install', event => {
-  event.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting()));
+  // cache: 'reload' skips the browser's own short-term cache, so an update never
+  // mixes new and old files.
+  event.waitUntil(caches.open(CACHE)
+    .then(c => c.addAll(FILES.map(f => new Request(f, { cache: 'reload' }))))
+    .then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', event => {

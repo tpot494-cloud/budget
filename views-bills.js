@@ -68,7 +68,8 @@ export function bills(query) {
   function mount(root) {
     root.querySelectorAll('[data-pay]').forEach(b => b.addEventListener('click', () => {
       const bill = s.bills.find(x => x.id === b.dataset.pay);
-      if (bill.variable) return go(`/pay/${bill.id}?m=${mk}`);
+      // Variable bills and debt payments ask for the real amount (debt payments may include extra).
+      if (bill.variable || s.debts.some(d => d.billId === bill.id)) return go(`/pay/${bill.id}?m=${mk}`);
       const paidOn = isCurrent ? today : C.dueDate(bill, mk);
       update(st => st.billPayments.push({ id: uid(), billId: bill.id, month: mk, amount: bill.amount, paidOn }));
       toast(`${bill.name} marked paid`);
@@ -96,7 +97,7 @@ export function payForm(billId, query) {
 
   const html = `<header class="form-hdr"><a href="#/bills?m=${mk}" class="link">Cancel</a><h1>Mark paid</h1><span></span></header>
   <main class="stack form">
-    <p class="muted">${esc(bill.name)} · ${monthLabel(mk)}. Enter what you actually paid.</p>
+    <p class="muted">${esc(bill.name)} · ${monthLabel(mk)}. Enter what you actually paid${s.debts.some(d => d.billId === bill.id) ? ', including anything extra. It comes off the debt\'s balance' : ''}.</p>
     ${moneyField('amt', 'Amount paid', bill.amount, 'class="big-input"')}
     <div class="field"><label for="date">Paid on</label><input id="date" type="date" value="${date}"></div>
     <button type="button" class="btn btn-primary" id="save">Mark paid</button>
@@ -130,6 +131,7 @@ export function billForm(id) {
       <span class="help">If a month is shorter, it's due on the last day.</span></div>
     <div class="check"><input id="var" type="checkbox"${b.variable ? ' checked' : ''}><label for="var"><span class="strong">The amount changes month to month</span><span class="muted small">You'll enter the real amount when you mark it paid (utilities, for example).</span></label></div>
     ${existing ? `<p class="help">Changes apply to this month and every month after. Months already paid keep what you actually paid.</p>` : ''}
+    ${existing && s.debts.some(d => d.billId === existing.id) ? `<p class="help">This is the monthly payment for ${esc(s.debts.find(d => d.billId === existing.id).name)}. Its amount is that debt's minimum.</p>` : ''}
     <button type="button" class="btn btn-primary" id="save">${existing ? 'Save changes' : 'Add bill'}</button>
     ${existing ? `<button type="button" class="btn btn-danger" id="del">Stop this bill</button>` : ''}
   </main>`;

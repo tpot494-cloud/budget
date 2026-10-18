@@ -7,6 +7,8 @@ import { dashboard, incomeForm } from './views-home.js';
 import { purchases, purchaseForm } from './views-spending.js';
 import { bills, billForm, payForm } from './views-bills.js';
 import { setup, categoryForm, goalForm, comingSoon } from './views-setup.js';
+import { debtExtra, debtByDate, debtForm, debtPayForm } from './views-debt.js';
+import { savingsScreen, savingForm } from './views-savings.js';
 
 const routes = [
   [/^\/home$/, () => dashboard()],
@@ -24,7 +26,14 @@ const routes = [
   [/^\/category\/(.+)$/, m => categoryForm(m[1])],
   [/^\/goal\/new$/, () => goalForm(null)],
   [/^\/goal\/(.+)$/, m => goalForm(m[1])],
-  [/^\/debt$/, () => comingSoon('debt')],
+  [/^\/savings$/, () => savingsScreen()],
+  [/^\/saving-new$/, (m, q) => savingForm(null, q)],
+  [/^\/saving\/(.+)$/, (m, q) => savingForm(m[1], q)],
+  [/^\/debt$/, () => debtExtra()],
+  [/^\/debt-date$/, (m, q) => debtByDate(q)],
+  [/^\/debt-new$/, () => debtForm(null)],
+  [/^\/debt-edit\/(.+)$/, m => debtForm(m[1])],
+  [/^\/debt-pay\/(.+)$/, m => debtPayForm(m[1])],
   [/^\/goals$/, () => comingSoon('goals')],
 ];
 

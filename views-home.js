@@ -3,6 +3,7 @@
 import { getState, update, uid } from './store.js';
 import * as C from './calc.js';
 import { fmt, esc, monthLabel, shortDate, pct, bar, go, toast, seg, bindSegs, moneyField, parseMoney } from './ui.js';
+import { debtSummaryCard } from './views-debt.js';
 
 const SOURCES = [['bonus', 'Bonus'], ['sale', 'Sold something'], ['other', 'Other']];
 const sourceLabel = v => (SOURCES.find(s => s[0] === v) || SOURCES[2])[1];
@@ -46,14 +47,16 @@ export function dashboard() {
     ${over ? `<span class="hero-warn">Your plan spends ${fmt(-p.leftover)} more than you take home.</span>` : ''}
   </section>`;
 
+  const savingsNow = C.savingsTotal(s);
   const runway = p.runwayMonths === null ? '—' : `${(Math.floor(p.runwayMonths * 10) / 10).toFixed(1)} mo`;
   const tiles = `<section class="tiles">
-    <div class="tile"><span class="tile-label">Savings</span><span class="num tile-num">${fmt(s.settings.savings)}</span><span class="tile-sub">in the bank</span></div>
+    <a class="tile tile-link" href="#/savings"><span class="tile-label">Savings ›</span><span class="num tile-num">${fmt(savingsNow)}</span><span class="tile-sub">tap to add</span></a>
     <div class="tile"><span class="tile-label">Savings rate</span><span class="num tile-num">${Math.round(p.savingsRate * 100)}%</span><span class="tile-sub">of take-home</span></div>
     <div class="tile"><span class="tile-label">Runway</span><span class="num tile-num">${runway}</span><span class="tile-sub">if pay stopped</span></div>
   </section>`;
 
   const paid = C.billsPaidTotal(s, mk);
+  const savedMonth = C.savedBetween(s, `${mk}-01`, today);
   const spent = C.flexibleSpent(s, mk);
   const overs = C.overBudget(s, mk);
   const month = `<section class="card stack">
@@ -66,6 +69,7 @@ export function dashboard() {
       <div class="row-between"><span class="strong">Flexible spending</span><span class="num strong">${fmt(spent)} <span class="muted">of ${fmt(p.budgets)}</span></span></div>
       ${bar(pct(spent, p.budgets), spent > p.budgets && p.budgets > 0 ? 'over' : '')}
     </div>
+    <div class="row-between"><span class="strong">Moved to savings</span><span class="num strong">${savedMonth < 0 ? '−' : ''}${fmt(Math.abs(savedMonth))}</span></div>
     ${overs.slice(0, 2).map(o => `<div class="alert-warn">${esc(o.category.name)} is ${fmt(o.spent - o.budget)} over its ${fmt(o.budget)} budget.</div>`).join('')}
     ${overs.length > 2 ? `<div class="alert-warn">${overs.length - 2} more ${overs.length - 2 === 1 ? 'category is' : 'categories are'} over budget.</div>` : ''}
     <a class="btn btn-outline" href="#/spending">Open spending</a>
@@ -86,8 +90,9 @@ export function dashboard() {
     <a class="btn btn-dashed" href="#/income/new">+ Log extra income</a>
   </section>`;
 
-  const goals = s.goals.map(g => {
-    const gp = C.goalPlan(g, s.settings.savings || 0, today);
+  const weekSaved = C.savedBetween(s, C.weekStart(today), today);
+  const goals = s.goals.map((g, gi) => {
+    const gp = C.goalPlan(g, savingsNow, today);
     let msg;
     if (gp.done) msg = 'Goal reached. Nice work.';
     else if (gp.pastDue) msg = `The target date has passed. Pick a new date in Setup.`;
@@ -95,13 +100,15 @@ export function dashboard() {
     else msg = `Save ${fmt(gp.weekly)} a week for the next ${gp.weeksLeft} ${gp.weeksLeft === 1 ? 'week' : 'weeks'} to hit it on time.`;
     return `<section class="card stack">
       <div class="row-between"><h2>${esc(g.name)}</h2><span class="muted small strong">by ${shortDate(g.targetDate, true)}</span></div>
-      <div class="row-base"><span class="num big">${fmt(Math.min(s.settings.savings || 0, g.target))}</span><span class="muted strong">of ${fmt(g.target)} · ${Math.round(gp.progress * 100)}%</span></div>
+      <div class="row-base"><span class="num big">${fmt(Math.min(Math.max(savingsNow, 0), g.target))}</span><span class="muted strong">of ${fmt(g.target)} · ${Math.round(gp.progress * 100)}%</span></div>
       ${bar(gp.progress * 100, 'thick')}
       <div class="alert-amber">${msg}</div>
+      ${gp.weekly ? `<div class="stack-xs"><div class="row-between"><span class="strong small">Saved this week</span><span class="num strong small">${fmt(Math.max(weekSaved, 0))} <span class="muted">of ${fmt(gp.weekly)}</span></span></div>${bar(Math.max(0, Math.min(100, weekSaved / gp.weekly * 100)))}</div>` : ''}
+      ${gi === 0 ? `<a class="btn btn-dashed" href="#/saving-new?k=deposit">+ Add to savings</a>` : ''}
     </section>`;
   }).join('');
 
-  return { tab: 'home', html: `${head}<main class="stack">${hero}${tiles}${month}${goals}${extra}</main>` };
+  return { tab: 'home', html: `${head}<main class="stack">${hero}${tiles}${month}${goals}${debtSummaryCard(s, today)}${extra}</main>` };
 }
 
 export function incomeForm(id) {
@@ -119,7 +126,7 @@ export function incomeForm(id) {
       <div class="field"><label for="note">Note</label><input id="note" type="text" value="${esc(inc.note)}" placeholder="Q3 bonus"></div>
     </div>
     <div class="field"><span class="label">Where it goes</span>${seg('alloc', [['savings', 'Savings'], ['spending', 'Spending money']], inc.allocation, 'Allocation')}
-      <span class="help">Spending money shows as extra for that month only.</span></div>
+      <span class="help">Savings adds it to your savings total. Spending money shows as extra for that month only.</span></div>
     <button type="button" class="btn btn-primary" id="save">${existing ? 'Save changes' : 'Save income'}</button>
     ${existing ? `<button type="button" class="btn btn-danger" id="del">Delete</button>` : ''}
   </main>`;
@@ -133,6 +140,7 @@ export function incomeForm(id) {
       if (!date) return toast('Pick a date');
       const entry = {
         id: existing ? existing.id : uid(),
+        createdAt: existing ? existing.createdAt : new Date().toISOString(),
         date, amount,
         source: val('source'),
         note: root.querySelector('#note').value.trim(),
@@ -142,18 +150,11 @@ export function incomeForm(id) {
         if (existing) Object.assign(st.incomes.find(i => i.id === existing.id), entry);
         else st.incomes.push(entry);
       });
-      // Ask instead of auto-adding: if savings was already updated from the bank,
-      // adding again would count the same money twice.
-      if (!existing && entry.allocation === 'savings') {
-        if (confirm(`Add ${fmt(amount, true)} to your savings balance?\n\nChoose Cancel if your savings number already includes it.`)) {
-          update(st => { st.settings.savings = (st.settings.savings || 0) + amount; });
-          toast(`Savings is now ${fmt(getState().settings.savings)}`);
-        }
-      } else toast('Saved');
+      toast(entry.allocation === 'savings' ? `Savings total is now ${fmt(C.savingsTotal(getState()))}` : 'Saved');
       go('/home');
     });
     root.querySelector('#del')?.addEventListener('click', () => {
-      if (!confirm('Delete this income entry? Your savings balance won\'t change.')) return;
+      if (!confirm('Delete this income entry?' + (existing.allocation === 'savings' ? ' Your savings total will update.' : ''))) return;
       update(st => { st.incomes = st.incomes.filter(i => i.id !== existing.id); });
       toast('Deleted');
       go('/home');

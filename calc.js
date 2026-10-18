@@ -141,8 +141,59 @@ export function plan(state, mk) {
   return {
     pay, bills, budgets, leftover,
     savingsRate: pay > 0 ? leftover / pay : 0,
-    runwayMonths: outgoing > 0 ? (state.settings.savings || 0) / outgoing : null,
+    runwayMonths: outgoing > 0 ? savingsTotal(state) / outgoing : null,
   };
+}
+
+// ---------- Savings ----------
+
+// Savings total = the balance you entered from your bank, plus deposits, withdrawals
+// and extra income to savings logged after you entered it. Entries dated before that
+// are already in the bank number; same-day entries count if logged after it.
+function afterBaseline(entry, asOf) {
+  if (!asOf) return true;
+  const asOfDate = todayStr(new Date(asOf));
+  if (entry.date !== asOfDate) return entry.date > asOfDate;
+  return !!entry.createdAt && entry.createdAt > asOf;
+}
+
+export function savingsEntries(state) {
+  const log = (state.savingsLog || []).map(e => ({ ...e, source: 'log' }));
+  const inc = state.incomes.filter(i => i.allocation === 'savings')
+    .map(i => ({ id: i.id, date: i.date, amount: i.amount, kind: 'deposit', note: i.note, createdAt: i.createdAt, inBalance: i.inBalance, source: 'income' }));
+  return [...log, ...inc];
+}
+
+export function savingsDetail(state) {
+  const st = state.settings;
+  const asOf = st.savingsAsOf || null;
+  let deposits = 0, withdrawals = 0, income = 0, counted = 0;
+  for (const e of savingsEntries(state)) {
+    if (e.inBalance || !afterBaseline(e, asOf)) continue;
+    counted++;
+    if (e.kind === 'withdrawal') withdrawals += e.amount;
+    else if (e.source === 'income') income += e.amount;
+    else deposits += e.amount;
+  }
+  const base = st.savings || 0;
+  return { base, asOf, deposits, withdrawals, income, counted, total: base + deposits + income - withdrawals };
+}
+
+export const savingsTotal = state => savingsDetail(state).total;
+
+export const isCounted = (state, e) => !e.inBalance && afterBaseline(e, state.settings.savingsAsOf || null);
+
+// Net money moved into savings between two dates (inclusive).
+export function savedBetween(state, from, to) {
+  return savingsEntries(state).filter(e => e.date >= from && e.date <= to)
+    .reduce((t, e) => t + (e.kind === 'withdrawal' ? -e.amount : e.amount), 0);
+}
+
+// Monday of the current week.
+export function weekStart(today) {
+  const d = parseDate(today);
+  d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+  return todayStr(d);
 }
 
 // ---------- Goals ----------
