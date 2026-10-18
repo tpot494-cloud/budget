@@ -42,7 +42,45 @@ export function monthlyPay(settings) {
   const p = settings.pay || 0;
   if (settings.payFrequency === 'weekly') return Math.round(p * 52 / 12);
   if (settings.payFrequency === 'biweekly') return Math.round(p * 26 / 12);
+  if (settings.payFrequency === 'semimonthly') return p * 2;
   return p;
+}
+
+export function addDays(dateStr, n) {
+  const d = parseDate(dateStr);
+  d.setDate(d.getDate() + n);
+  return todayStr(d);
+}
+
+// Twice-a-month paydays fall on the 1st and 15th, moved to the Friday before if
+// either lands on a weekend (what most employers do).
+function weekdayBefore(dateStr) {
+  const d = parseDate(dateStr);
+  while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() - 1);
+  return todayStr(d);
+}
+
+// Paydays between two dates (inclusive), projected from the "next payday" setting.
+// Works backwards too, so past paydays show on earlier months.
+export function paydaysBetween(settings, from, to) {
+  const anchor = settings.nextPayday;
+  if (!anchor || !settings.pay) return [];
+  const f = settings.payFrequency;
+  const out = [];
+  if (f === 'weekly' || f === 'biweekly') {
+    const step = f === 'weekly' ? 7 : 14;
+    const k = Math.ceil(daysBetween(anchor, from) / step);
+    for (let d = addDays(anchor, k * step); d <= to; d = addDays(d, step)) out.push(d);
+    return out;
+  }
+  const day = Number(anchor.slice(8, 10));
+  for (let mk = shiftMonth(monthOf(from), -1); mk <= shiftMonth(monthOf(to), 1); mk = shiftMonth(mk, 1)) {
+    const dates = f === 'semimonthly'
+      ? [weekdayBefore(`${mk}-01`), weekdayBefore(`${mk}-15`)]
+      : [`${mk}-${pad(Math.min(day, daysInMonth(mk)))}`];
+    for (const d of dates) if (d >= from && d <= to) out.push(d);
+  }
+  return [...new Set(out)].sort();
 }
 
 export function incomesInMonth(state, mk) {
@@ -189,10 +227,10 @@ export function savedBetween(state, from, to) {
     .reduce((t, e) => t + (e.kind === 'withdrawal' ? -e.amount : e.amount), 0);
 }
 
-// Monday of the current week.
-export function weekStart(today) {
-  const d = parseDate(today);
-  d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+// Sunday that starts the week containing this date.
+export function weekStart(dateStr) {
+  const d = parseDate(dateStr);
+  d.setDate(d.getDate() - d.getDay());
   return todayStr(d);
 }
 

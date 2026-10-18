@@ -81,7 +81,7 @@ export const icon = {
   home: svg('<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>'),
   spending: svg('<path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/><path d="M9 8h6M9 12h6"/>'),
   debt: svg('<path d="M3 7l6 6 4-4 8 8"/><path d="M15 17h6v-6"/>'),
-  goals: svg('<rect x="3.5" y="5" width="17" height="15.5" rx="2"/><path d="M3.5 10h17M8 3v4M16 3v4"/>'),
+  calendar: svg('<rect x="3.5" y="5" width="17" height="15.5" rx="2"/><path d="M3.5 10h17M8 3v4M16 3v4"/>'),
   setup: svg('<path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/>'),
   chevron: svg('<path d="M9 6l6 6-6 6"/>', 16),
   back: svg('<path d="M15 6l-6 6 6 6"/>', 22),
@@ -96,7 +96,7 @@ const TABS = [
   ['home', '/home', 'Dashboard'],
   ['spending', '/spending', 'Spending'],
   ['debt', '/debt', 'Debt'],
-  ['goals', '/goals', 'Goals'],
+  ['calendar', '/calendar', 'Calendar'],
   ['setup', '/setup', 'Setup'],
 ];
 

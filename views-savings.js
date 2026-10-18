@@ -3,6 +3,7 @@
 import { getState, update, uid } from './store.js';
 import * as C from './calc.js';
 import { fmt, esc, shortDate, go, toast, seg, bindSegs, moneyField, parseMoney } from './ui.js';
+import { recurringPicker, bindRecurring, saveRecurring } from './views-recurring.js';
 
 export function savingsScreen() {
   const s = getState();
@@ -69,14 +70,15 @@ export function savingForm(id, query) {
   const s = getState();
   const existing = id ? (s.savingsLog || []).find(e => e.id === id) : null;
   if (id && !existing) return { html: `<main class="stack"><p>That entry no longer exists.</p><a class="btn btn-outline" href="#/savings">Back</a></main>` };
-  const e = existing || { date: C.todayStr(), amount: 0, kind: query.get('k') === 'withdrawal' ? 'withdrawal' : 'deposit', note: '' };
+  const e = existing || { date: C.todayStr(), amount: Number(query.get('a')) || 0, kind: query.get('k') === 'withdrawal' ? 'withdrawal' : 'deposit', note: '' };
 
   const html = `<header class="form-hdr"><a href="#/savings" class="link">Cancel</a><h1>${existing ? 'Edit entry' : e.kind === 'withdrawal' ? 'Take out' : 'Add to savings'}</h1><span></span></header>
   <main class="stack form">
     ${moneyField('amt', 'Amount', e.amount, 'class="big-input"')}
     <div class="field"><span class="label">Type</span>${seg('kind', [['deposit', 'Add to savings'], ['withdrawal', 'Take out']], e.kind, 'Entry type')}</div>
+    ${existing ? '' : recurringPicker('Is this a one-time or recurring saving?')}
     <div class="grid-2">
-      <div class="field"><label for="date">Date</label><input id="date" type="date" value="${e.date}" max="${C.todayStr()}"></div>
+      <div class="field" data-once><label for="date">Date</label><input id="date" type="date" value="${e.date}" max="${C.todayStr()}"></div>
       <div class="field"><label for="note">Note</label><input id="note" type="text" value="${esc(e.note)}" placeholder="${e.kind === 'withdrawal' ? 'Car repair' : 'Weekly transfer'}"></div>
     </div>
     <span class="help">Moving money into savings isn't spending, so it doesn't count against your category budgets.</span>
@@ -85,12 +87,27 @@ export function savingForm(id, query) {
   </main>`;
 
   function mount(root) {
-    const val = bindSegs(root);
+    let picker = null;
+    const val = bindSegs(root, (n, v) => {
+      if (!picker) return;
+      picker.onSeg(n, v);
+      if (n === 'kind') picker.setToggleVisible(v === 'deposit');
+    });
+    if (!existing) {
+      picker = bindRecurring(root);
+      if (e.kind === 'withdrawal') picker.setToggleVisible(false);
+    }
     if (!existing) setTimeout(() => root.querySelector('#amt').focus(), 50);
     root.querySelector('#save').addEventListener('click', () => {
       const amount = parseMoney(root.querySelector('#amt').value);
       const date = root.querySelector('#date').value;
       if (!amount || amount <= 0) return toast('Enter an amount');
+      if (picker && picker.mode === 'recurring') {
+        const sched = picker.read();
+        if (sched.error) return toast(sched.error);
+        saveRecurring({ kind: 'saving', amount, note: root.querySelector('#note').value.trim(), ...sched });
+        return go('/calendar');
+      }
       if (!date) return toast('Pick a date');
       const kind = val('kind');
       const fields = { date, amount, kind, note: root.querySelector('#note').value.trim() };

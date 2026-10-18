@@ -4,6 +4,7 @@
 import { getState, update, uid, exportBackup, readBackup, replaceAll, eraseAll } from './store.js';
 import * as C from './calc.js';
 import { fmt, esc, shortDate, go, toast, seg, bindSegs, moneyField, parseMoney, icon } from './ui.js';
+import { recurringListCard } from './views-recurring.js';
 
 export function setup() {
   const s = getState();
@@ -36,8 +37,10 @@ export function setup() {
     <h2>Money in</h2>
     ${moneyField('pay', 'Take-home pay per paycheck', st.pay)}
     <div class="field"><span class="label">How often you're paid</span>
-      ${seg('freq', [['weekly', 'Weekly'], ['biweekly', 'Biweekly'], ['monthly', 'Monthly']], st.payFrequency, 'Pay frequency')}
+      ${seg('freq', [['weekly', 'Weekly'], ['biweekly', 'Every 2 weeks'], ['semimonthly', 'Twice a month'], ['monthly', 'Monthly']], st.payFrequency, 'Pay frequency').replace('style="--n:4"', 'style="--n:2"')}
       <span class="help" id="payHelp">${payHelp(st)}</span></div>
+    <div class="field"><label for="payday">Next payday</label><input id="payday" type="date" value="${st.nextPayday || ''}">
+      <span class="help">Paydays show on the calendar from this date. Twice a month uses the 1st and 15th, moved to the Friday before when one lands on a weekend.</span></div>
     <span class="help">Only reliable pay goes here. Log bonuses and one-off money from the Dashboard.</span>
   </section>`;
 
@@ -75,7 +78,7 @@ export function setup() {
   </section>`;
 
   const html = `<header class="hdr"><h1>Setup</h1><span class="muted">The numbers every other screen is calculated from.</span></header>
-    <main class="stack">${backup}${money}${savings}${billsRow}${cats}${goals}${danger}</main>`;
+    <main class="stack">${backup}${money}${savings}${billsRow}${cats}${goals}${recurringListCard(s)}${danger}</main>`;
 
   function mount(root) {
     const $ = sel => root.querySelector(sel);
@@ -102,6 +105,10 @@ export function setup() {
       toast(how === 'shared' ? 'Backup shared' : 'Backup saved to Downloads');
       go('/setup');
     };
+    $('#payday').addEventListener('change', e => {
+      update(x => { x.settings.nextPayday = e.target.value || null; });
+      toast('Saved');
+    });
     $('#export').addEventListener('click', () => doExport(false));
     $('#download').addEventListener('click', () => doExport(true));
     $('#import').addEventListener('click', () => $('#importFile').click());
@@ -242,20 +249,4 @@ export function goalForm(id) {
     });
   }
   return { hideNav: true, html, mount };
-}
-
-export function comingSoon(which) {
-  const s = getState();
-  if (which === 'debt') {
-    const cardSpend = s.purchases.filter(p => p.paidWith === 'card').reduce((t, p) => t + p.amount, 0);
-    return { tab: 'debt', html: `<header class="hdr"><h1>Debt payoff</h1></header><main class="stack">
-      <section class="card stack-sm"><h2>Coming in the next update</h2>
-      <p class="muted">Payoff plans by extra amount or by date, payoff order, and how each plan changes your monthly budget.</p>
-      <p class="muted">Card purchases are already being tracked${cardSpend ? ` (${fmt(cardSpend, true)} so far)` : ''}, so they'll count toward your card balance as soon as this screen arrives.</p></section></main>` };
-  }
-  return { tab: 'goals', html: `<header class="hdr"><h1>Goals</h1></header><main class="stack">
-    <section class="card stack-sm"><h2>Coming in the next update</h2>
-    <p class="muted">A calendar view of how much to save each week to hit each goal.</p>
-    <p class="muted">Goals you add in Setup already show their weekly target on the Dashboard.</p>
-    <a class="btn btn-outline" href="#/goal/new">Add a goal</a></section></main>` };
 }

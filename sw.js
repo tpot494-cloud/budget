@@ -2,7 +2,7 @@
 // IMPORTANT: when you upload a new version of any file, VERSION must change too
 // (I'll do this for you in each update). That's how the phone knows to refresh.
 
-const VERSION = 'v1.2.0';
+const VERSION = 'v1.3.0';
 const CACHE = 'budget-' + VERSION;
 const FILES = [
   './',
@@ -19,6 +19,9 @@ const FILES = [
   'views-debt.js',
   'calc-debt.js',
   'views-savings.js',
+  'calc-cal.js',
+  'views-calendar.js',
+  'views-recurring.js',
   'manifest.webmanifest',
   'manrope.woff2',
   'space-grotesk.woff2',

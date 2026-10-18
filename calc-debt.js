@@ -83,6 +83,9 @@ export function simulate(debts, opts) {
 
   const [sy, sm, sd] = opts.start.split('-').map(Number);
   let totalInterest = 0;
+  const snaps = {};
+  const snap = date => { if (opts.snapshots && opts.snapshots.has(date)) snaps[date] = Object.fromEntries(ds.map(d => [d.id, Math.round(d.bal)])); };
+  snap(opts.start);
   const MAX_DAYS = 365 * 30;
   for (let day = 1; day <= MAX_DAYS; day++) {
     const date = new Date(sy, sm - 1, sd + day);
@@ -120,6 +123,7 @@ export function simulate(debts, opts) {
       if (d.bal < 0.5) { d.bal = 0; d.paidOffOn = ds_; }
     }
 
+    snap(ds_);
     if (ds.every(d => d.bal === 0)) break;
   }
 
@@ -128,6 +132,7 @@ export function simulate(debts, opts) {
     done,
     debtFreeOn: done ? ds.reduce((m, d) => (d.paidOffOn > m ? d.paidOffOn : m), opts.start) : null,
     interest: Math.round(totalInterest),
+    snaps,
     perDebt: ds.map(d => ({ id: d.id, name: d.name, paidOffOn: d.bal === 0 ? d.paidOffOn : null, interest: Math.round(d.int) })),
   };
 }

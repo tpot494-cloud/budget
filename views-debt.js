@@ -5,6 +5,7 @@ import { getState, update, uid } from './store.js';
 import * as C from './calc.js';
 import * as D from './calc-debt.js';
 import { fmt, esc, shortDate, go, toast, seg, bindSegs, moneyField, parseMoney, moneyValue, icon } from './ui.js';
+import { recurringPicker, bindRecurring, saveRecurring } from './views-recurring.js';
 
 const SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 export const monthYear = s => (s ? `${SHORT[Number(s.slice(5, 7)) - 1]} ${s.slice(0, 4)}` : '—');
@@ -447,16 +448,27 @@ export function debtPayForm(id) {
   const html = `<header class="form-hdr"><a href="#/debt-edit/${id}" class="link">Cancel</a><h1>Extra payment</h1><span></span></header>
   <main class="stack form">
     <p class="muted">For payments to ${esc(debt.name)} beyond the monthly bill, like your weekly extra. Mark the monthly bill paid on the Bills screen as usual.</p>
-    ${moneyField('amt', 'Amount', 0, 'class="big-input"')}
-    <div class="field"><label for="date">Date</label><input id="date" type="date" value="${C.todayStr()}" max="${C.todayStr()}"></div>
+    ${moneyField('amt', 'Amount', s.settings.debtPlan.amount || 0, 'class="big-input"')}
+    ${recurringPicker('Is this a one-time or recurring payment?')}
+    <div class="field" data-once><label for="date">Date</label><input id="date" type="date" value="${C.todayStr()}" max="${C.todayStr()}"></div>
+    <div class="field" data-rec hidden><label for="rnote">Name (optional)</label><input id="rnote" type="text" placeholder="Extra card payment"></div>
     <button type="button" class="btn btn-primary" id="save">Save payment</button>
   </main>`;
   function mount(root) {
+    let picker = null;
+    bindSegs(root, (n, v) => picker && picker.onSeg(n, v));
+    picker = bindRecurring(root);
     setTimeout(() => root.querySelector('#amt').focus(), 50);
     root.querySelector('#save').addEventListener('click', () => {
       const amount = parseMoney(root.querySelector('#amt').value);
       const date = root.querySelector('#date').value;
       if (!amount || amount <= 0) return toast('Enter an amount');
+      if (picker.mode === 'recurring') {
+        const sched = picker.read();
+        if (sched.error) return toast(sched.error);
+        saveRecurring({ kind: 'debt', debtId: id, amount, note: root.querySelector('#rnote').value.trim(), ...sched });
+        return go('/calendar');
+      }
       if (!date) return toast('Pick a date');
       update(st => st.debtPayments.push({ id: uid(), debtId: id, date, amount }));
       toast('Payment logged');

@@ -10,7 +10,8 @@ export function emptyState() {
     schema: SCHEMA,
     settings: {
       pay: 0,                 // take-home pay per paycheck, in cents
-      payFrequency: 'monthly', // 'weekly' | 'biweekly' | 'monthly'
+      payFrequency: 'monthly', // 'weekly' | 'biweekly' | 'semimonthly' (1st & 15th) | 'monthly'
+      nextPayday: null,       // 'YYYY-MM-DD'; anchors the payday schedule on the calendar
       savings: 0,             // savings balance from the bank, in cents (see savingsAsOf)
       savingsAsOf: null,      // when that balance was entered (ISO timestamp); null = from the start
       lastBackupAt: null,     // ISO timestamp of the last export
@@ -31,7 +32,8 @@ export function emptyState() {
     goals: [],        // { id, name, target, targetDate }
     debts: [],        // { id, name, type, balance (from statement), asOf, apr (%), minPayment, billId }
     debtPayments: [], // extra payments beyond the monthly bill: { id, debtId, date, amount }
-    savingsLog: [],   // money moved in or out of savings: { id, date, amount, kind:'deposit'|'withdrawal', note, createdAt }
+    savingsLog: [],   // money moved in or out of savings: { id, date, amount, kind:'deposit'|'withdrawal', note, createdAt, recurringId?, occDate? }
+    recurring: [],    // planned repeats: { id, kind:'saving'|'debt', debtId?, amount, repeat:'payday'|'weekly'|'monthly', dow, dom, note, startDate, endDate|null }
   };
 }
 
@@ -81,7 +83,7 @@ export function migrate(data) {
   const out = { ...base, ...data };
   out.settings = { ...base.settings, ...(data.settings || {}) };
   out.settings.debtPlan = { ...base.settings.debtPlan, ...((data.settings || {}).debtPlan || {}) };
-  for (const k of ['categories', 'bills', 'billPayments', 'purchases', 'incomes', 'goals', 'debts', 'debtPayments', 'savingsLog']) {
+  for (const k of ['categories', 'bills', 'billPayments', 'purchases', 'incomes', 'goals', 'debts', 'debtPayments', 'savingsLog', 'recurring']) {
     out[k] = Array.isArray(data[k]) ? data[k] : [];
   }
   // Data from before v1.2: the savings number already includes everything up to now,
