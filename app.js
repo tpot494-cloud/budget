@@ -8,9 +8,10 @@ import { purchases, purchaseForm } from './views-spending.js';
 import { bills, billForm, payForm } from './views-bills.js';
 import { setup, categoryForm, goalForm } from './views-setup.js';
 import { debtExtra, debtByDate, debtForm, debtPayForm } from './views-debt.js';
-import { savingsScreen, savingForm } from './views-savings.js';
+import { savingsScreen, savingForm, accountForm } from './views-savings.js';
 import { calendarMonth, calendarWeeks } from './views-calendar.js';
 import { recurringEditForm } from './views-recurring.js';
+import { recap } from './views-recap.js';
 
 const routes = [
   [/^\/home$/, () => dashboard()],
@@ -29,6 +30,7 @@ const routes = [
   [/^\/goal\/new$/, () => goalForm(null)],
   [/^\/goal\/(.+)$/, m => goalForm(m[1])],
   [/^\/savings$/, () => savingsScreen()],
+  [/^\/savings-account\/(.+)$/, m => accountForm(m[1])],
   [/^\/saving-new$/, (m, q) => savingForm(null, q)],
   [/^\/saving\/(.+)$/, (m, q) => savingForm(m[1], q)],
   [/^\/debt$/, () => debtExtra()],
@@ -40,6 +42,7 @@ const routes = [
   [/^\/calendar-weeks$/, (m, q) => calendarWeeks(q)],
   [/^\/recurring\/(.+)$/, m => recurringEditForm(m[1])],
   [/^\/goals$/, (m, q) => calendarWeeks(q)],
+  [/^\/recap$/, (m, q) => recap(q)],
 ];
 
 const app = document.getElementById('app');

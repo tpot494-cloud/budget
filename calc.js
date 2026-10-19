@@ -128,16 +128,26 @@ export function purchasesInMonth(state, mk) {
   return state.purchases.filter(p => monthOf(p.date) === mk);
 }
 
+// A purchase's category parts: one part normally, several when it's split.
+export function purchaseParts(p) {
+  return p.splits && p.splits.length ? p.splits : [{ categoryId: p.categoryId, amount: p.amount }];
+}
+
+export const usesCategory = (p, categoryId) => purchaseParts(p).some(x => x.categoryId === categoryId);
+
 export function spentInCategory(state, categoryId, mk, excludeId = null) {
-  return purchasesInMonth(state, mk)
-    .filter(p => p.categoryId === categoryId && p.id !== excludeId)
-    .reduce((t, p) => t + p.amount, 0);
+  let t = 0;
+  for (const p of purchasesInMonth(state, mk)) {
+    if (p.id === excludeId) continue;
+    for (const part of purchaseParts(p)) if (part.categoryId === categoryId) t += part.amount;
+  }
+  return t;
 }
 
 // Active categories plus any archived ones that have spending this month.
 export function categoryTotals(state, mk) {
   const spent = {};
-  for (const p of purchasesInMonth(state, mk)) spent[p.categoryId] = (spent[p.categoryId] || 0) + p.amount;
+  for (const p of purchasesInMonth(state, mk)) for (const part of purchaseParts(p)) spent[part.categoryId] = (spent[part.categoryId] || 0) + part.amount;
   return state.categories
     .filter(c => !c.archived || spent[c.id])
     .map(c => ({ category: c, spent: spent[c.id] || 0, budget: c.budget || 0 }))
@@ -195,36 +205,94 @@ function afterBaseline(entry, asOf) {
   return !!entry.createdAt && entry.createdAt > asOf;
 }
 
+// Savings live in one or more accounts. Each account has its own bank balance and up
+// to 4 named buckets; whatever isn't in a named bucket is "Unassigned".
+//   account total  = bank balance + deposits/withdrawals/extra income logged after it
+//   named bucket   = everything ever added to / taken from / moved into or out of it
+//   unassigned     = account total − named buckets
+// So updating from the bank never disturbs your buckets; the difference lands in Unassigned.
+
+export const accounts = state => state.savingsAccounts || [];
+export function accountOf(state, e) {
+  const list = accounts(state);
+  return list.find(a => a.id === e.accountId) || list[0] || null;
+}
+export function bucketName(acct, bucketId) {
+  return acct?.buckets?.find(b => b.id === bucketId)?.name || 'Unassigned';
+}
+
 export function savingsEntries(state) {
-  const log = (state.savingsLog || []).map(e => ({ ...e, source: 'log' }));
+  const fallback = accounts(state)[0]?.id || null;
+  const log = (state.savingsLog || []).map(e => ({ ...e, accountId: e.accountId || fallback, source: 'log' }));
   const inc = state.incomes.filter(i => i.allocation === 'savings')
-    .map(i => ({ id: i.id, date: i.date, amount: i.amount, kind: 'deposit', note: i.note, createdAt: i.createdAt, inBalance: i.inBalance, source: 'income' }));
+    .map(i => ({ id: i.id, date: i.date, amount: i.amount, kind: 'deposit', note: i.note, createdAt: i.createdAt, inBalance: i.inBalance,
+      accountId: i.accountId || fallback, bucketId: i.bucketId || null, source: 'income' }));
   return [...log, ...inc];
 }
 
-export function savingsDetail(state) {
-  const st = state.settings;
-  const asOf = st.savingsAsOf || null;
+export function accountDetail(state, acct, entries = savingsEntries(state)) {
+  const mine = entries.filter(e => e.accountId === acct.id);
   let deposits = 0, withdrawals = 0, income = 0, counted = 0;
-  for (const e of savingsEntries(state)) {
-    if (e.inBalance || !afterBaseline(e, asOf)) continue;
+  for (const e of mine) {
+    if (e.kind === 'move' || e.inBalance || !afterBaseline(e, acct.asOf || null)) continue;
     counted++;
     if (e.kind === 'withdrawal') withdrawals += e.amount;
     else if (e.source === 'income') income += e.amount;
     else deposits += e.amount;
   }
-  const base = st.savings || 0;
-  return { base, asOf, deposits, withdrawals, income, counted, total: base + deposits + income - withdrawals };
+  const base = acct.balance || 0;
+  const total = base + deposits + income - withdrawals;
+  const buckets = (acct.buckets || []).map(b => {
+    let bal = 0;
+    for (const e of mine) {
+      if (e.kind === 'move') { if (e.toBucketId === b.id) bal += e.amount; if (e.fromBucketId === b.id) bal -= e.amount; }
+      else if (e.bucketId === b.id) bal += e.kind === 'withdrawal' ? -e.amount : e.amount;
+    }
+    return { ...b, balance: bal };
+  });
+  const unassigned = total - buckets.reduce((t, b) => t + b.balance, 0);
+  return { acct, base, asOf: acct.asOf || null, deposits, withdrawals, income, counted, total, buckets, unassigned };
+}
+
+export function savingsDetail(state) {
+  const entries = savingsEntries(state);
+  const list = accounts(state).map(a => accountDetail(state, a, entries));
+  return { accounts: list, total: list.reduce((t, d) => t + d.total, 0) };
 }
 
 export const savingsTotal = state => savingsDetail(state).total;
 
-export const isCounted = (state, e) => !e.inBalance && afterBaseline(e, state.settings.savingsAsOf || null);
+export function isCounted(state, e) {
+  if (e.kind === 'move') return true;
+  const acct = accountOf(state, e);
+  return !e.inBalance && afterBaseline(e, acct?.asOf || null);
+}
 
-// Net money moved into savings between two dates (inclusive).
-export function savedBetween(state, from, to) {
-  return savingsEntries(state).filter(e => e.date >= from && e.date <= to)
-    .reduce((t, e) => t + (e.kind === 'withdrawal' ? -e.amount : e.amount), 0);
+// Balance of one bucket (bucketId null = Unassigned) or a whole account.
+export function scopeBalance(state, accountId, bucketId) {
+  const acct = accounts(state).find(a => a.id === accountId);
+  if (!acct) return savingsTotal(state);
+  const d = accountDetail(state, acct);
+  if (bucketId === undefined || bucketId === '') return d.total;
+  if (bucketId === null) return d.unassigned;
+  return d.buckets.find(b => b.id === bucketId)?.balance ?? d.unassigned;
+}
+
+// Net money moved into savings between two dates (inclusive). With a scope, counts
+// only that account (and bucket, including moves in and out of it).
+export function savedBetween(state, from, to, scope = null) {
+  let t = 0;
+  for (const e of savingsEntries(state)) {
+    if (e.date < from || e.date > to) continue;
+    if (scope && scope.accountId && e.accountId !== scope.accountId) continue;
+    if (e.kind === 'move') {
+      if (scope && scope.bucketId) { if (e.toBucketId === scope.bucketId) t += e.amount; if (e.fromBucketId === scope.bucketId) t -= e.amount; }
+      continue;
+    }
+    if (scope && scope.bucketId && e.bucketId !== scope.bucketId) continue;
+    t += e.kind === 'withdrawal' ? -e.amount : e.amount;
+  }
+  return t;
 }
 
 // Sunday that starts the week containing this date.
@@ -236,7 +304,23 @@ export function weekStart(dateStr) {
 
 // ---------- Goals ----------
 
-// Goals draw on the single savings balance.
+// A goal counts all savings, one account, or one bucket of an account.
+export function goalScope(goal) {
+  if (!goal.accountId) return null;
+  return { accountId: goal.accountId, bucketId: goal.bucketId || undefined };
+}
+export function goalBalance(state, goal) {
+  const sc = goalScope(goal);
+  return sc ? scopeBalance(state, sc.accountId, sc.bucketId) : savingsTotal(state);
+}
+export function goalScopeLabel(state, goal) {
+  const sc = goalScope(goal);
+  if (!sc) return 'All savings';
+  const acct = accounts(state).find(a => a.id === sc.accountId);
+  if (!acct) return 'All savings';
+  return sc.bucketId ? `${acct.name} › ${bucketName(acct, sc.bucketId)}` : acct.name;
+}
+
 export function goalPlan(goal, savings, today) {
   const remaining = Math.max(0, goal.target - savings);
   const days = daysBetween(today, goal.targetDate);

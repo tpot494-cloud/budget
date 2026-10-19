@@ -62,6 +62,7 @@ export function eventsBetween(state, from, to, today) {
     add(d, { type: 'payday', amount: state.settings.pay, arrived: d <= today });
   }
   for (const e of state.savingsLog || []) {
+    if (e.kind === 'move') continue; // moves between buckets don't change how much is saved
     add(e.date, { type: e.kind === 'withdrawal' ? 'withdrawn' : 'saved', amount: e.amount, name: e.note || (e.kind === 'withdrawal' ? 'Taken out of savings' : 'Added to savings'), entryId: e.id, source: 'log' });
   }
   for (const i of state.incomes) {
@@ -96,10 +97,9 @@ export function dayMarkers(events = []) {
 
 // Goals share one savings pot, so the week's target is the largest of the goals' weekly needs.
 export function goalWeekly(state, today) {
-  const total = C.savingsTotal(state);
   let best = null;
   for (const g of state.goals) {
-    const gp = C.goalPlan(g, total, today);
+    const gp = C.goalPlan(g, C.goalBalance(state, g), today);
     if (gp.weekly && (!best || gp.weekly > best.amount)) best = { amount: gp.weekly, goal: g };
   }
   return best;
@@ -155,7 +155,7 @@ export function weeksModel(state, today, before = 1, after = 6) {
     const paydays = evs.filter(e => e.type === 'payday');
     const plannedSave = evs.filter(e => e.type === 'planned' && e.kind === 'saving');
     const plannedDebt = evs.filter(e => e.type === 'planned' && e.kind === 'debt');
-    const saved = C.savedBetween(state, start, end);
+    const saved = C.savedBetween(state, start, end, gw ? C.goalScope(gw.goal) : null);
     const extraPaid = debtPaidBetween(state, start, end);
 
     // The week's target is the goal pace. Recurring transfers are your plan toward it,
@@ -218,9 +218,8 @@ export function extraPaycheckMonths(state, today) {
 
 export function milestones(state, today) {
   const out = [];
-  const total = C.savingsTotal(state);
   for (const g of state.goals) {
-    const gp = C.goalPlan(g, total, today);
+    const gp = C.goalPlan(g, C.goalBalance(state, g), today);
     if (gp.done) continue;
     out.push({ date: g.targetDate, kind: 'goal', title: `${g.name} reaches ${'$' + Math.round(g.target / 100).toLocaleString('en-US')}`, sub: gp.weekly ? `At $${Math.round(gp.weekly / 100).toLocaleString('en-US')} a week` : 'Target date' });
   }

@@ -1,7 +1,7 @@
 // views-setup.js — Setup (pay, savings, categories, goals, backup), the category and
 // goal forms, and placeholder screens for the views coming in the next update.
 
-import { getState, update, uid, exportBackup, readBackup, replaceAll, eraseAll } from './store.js';
+import { getState, update, uid, exportBackup, readBackup, replaceAll, eraseAll, exportPurchasesCsv } from './store.js';
 import * as C from './calc.js';
 import { fmt, esc, shortDate, go, toast, seg, bindSegs, moneyField, parseMoney, icon } from './ui.js';
 import { recurringListCard } from './views-recurring.js';
@@ -31,6 +31,11 @@ export function setup() {
     <input type="file" id="importFile" accept="application/json,.json" hidden>
     <span class="help">Opens your phone's share menu so you can save the backup file to Files, Drive or email. Keep a copy somewhere safe: it's the only copy of your data outside this app.</span>
     <button type="button" class="link-btn small" id="download">Download the file instead</button>
+  </section>
+  <section class="card stack-sm">
+    <h2>Export for Excel</h2>
+    <p class="help">Every purchase as a CSV file that opens in Excel or Sheets: date, month, amount, category, note and how you paid. Split purchases get one row per category, so totals by category stay correct.</p>
+    <button type="button" class="btn btn-outline" id="csv"${s.purchases.length ? '' : ' disabled'}>Export purchases (${s.purchases.length})</button>
   </section>`;
 
   const money = `<section class="card stack">
@@ -68,7 +73,7 @@ export function setup() {
   const goals = `<section class="card">
     <h2 class="pad-bottom">Goals</h2>
     ${s.goals.map(g => `<a class="list-row" href="#/goal/${g.id}">
-      <span class="stack-2"><span class="strong">${esc(g.name)}</span><span class="muted small">${fmt(g.target)} by ${shortDate(g.targetDate, true)}</span></span>${icon.chevron}</a>`).join('')}
+      <span class="stack-2"><span class="strong">${esc(g.name)}</span><span class="muted small">${fmt(g.target)} by ${shortDate(g.targetDate, true)}${g.accountId ? ' · ' + esc(C.goalScopeLabel(s, g)) : ''}</span></span>${icon.chevron}</a>`).join('')}
     <a class="btn btn-dashed mt" href="#/goal/new">+ Add goal</a>
   </section>`;
 
@@ -111,6 +116,10 @@ export function setup() {
     });
     $('#export').addEventListener('click', () => doExport(false));
     $('#download').addEventListener('click', () => doExport(true));
+    $('#csv').addEventListener('click', async () => {
+      const how = await exportPurchasesCsv();
+      if (how !== 'cancelled') toast(how === 'shared' ? 'Purchases exported' : 'Saved to Downloads');
+    });
     $('#import').addEventListener('click', () => $('#importFile').click());
     $('#importFile').addEventListener('change', async e => {
       const file = e.target.files[0];
@@ -149,7 +158,7 @@ export function categoryForm(id) {
   const existing = id ? s.categories.find(c => c.id === id) : null;
   if (id && !existing) return { html: `<main class="stack"><p>That category no longer exists.</p><a class="btn btn-outline" href="#/setup">Back</a></main>` };
   const c = existing || { name: '', budget: 0, archived: false };
-  const used = existing ? s.purchases.filter(p => p.categoryId === existing.id).length : 0;
+  const used = existing ? s.purchases.filter(p => C.usesCategory(p, existing.id)).length : 0;
   const others = s.categories.filter(x => x.id !== c.id && !x.archived);
 
   const manage = !existing ? '' : `<section class="card stack-sm">
@@ -188,7 +197,19 @@ export function categoryForm(id) {
       const to = s.categories.find(x => x.id === $('#mergeTo').value);
       if (!confirm(`Move all ${used} purchases from ${c.name} into ${to.name}, then remove ${c.name}?`)) return;
       update(st => {
-        st.purchases.forEach(p => { if (p.categoryId === c.id) p.categoryId = to.id; });
+        st.purchases.forEach(p => {
+          if (p.categoryId === c.id) p.categoryId = to.id;
+          if (p.splits && p.splits.length) {
+            // Fold split parts into the target category, combining if it's already there.
+            const merged = [];
+            for (const part of p.splits) {
+              const cid = part.categoryId === c.id ? to.id : part.categoryId;
+              const ex = merged.find(m => m.categoryId === cid);
+              if (ex) ex.amount += part.amount; else merged.push({ categoryId: cid, amount: part.amount });
+            }
+            if (merged.length > 1) p.splits = merged; else { delete p.splits; p.categoryId = merged[0].categoryId; }
+          }
+        });
         st.categories = st.categories.filter(x => x.id !== c.id);
       });
       toast(`Merged into ${to.name}`);
@@ -220,7 +241,12 @@ export function goalForm(id) {
     <div class="field"><label for="name">Name</label><input id="name" type="text" value="${esc(g.name)}" placeholder="Emergency fund"></div>
     ${moneyField('target', 'Target amount', g.target)}
     <div class="field"><label for="date">Reach it by</label><input id="date" type="date" value="${g.targetDate}" min="${C.todayStr()}"></div>
-    <span class="help">Progress is measured against your savings total.</span>
+    <div class="field"><label for="scope">Counts toward it</label><div class="select"><select id="scope">
+      <option value="all"${!g.accountId ? ' selected' : ''}>All savings</option>
+      ${C.accounts(s).map(a => `<option value="a:${a.id}"${g.accountId === a.id && !g.bucketId ? ' selected' : ''}>${esc(a.name)} (whole account)</option>` +
+        (a.buckets || []).map(b => `<option value="b:${a.id}:${b.id}"${g.accountId === a.id && g.bucketId === b.id ? ' selected' : ''}>${esc(a.name)} › ${esc(b.name)}</option>`).join('')).join('')}
+    </select></div>
+      <span class="help">Pick a bucket to track this goal on its own money, separate from your other savings.</span></div>
     <button type="button" class="btn btn-primary" id="save">${existing ? 'Save changes' : 'Add goal'}</button>
     ${existing ? `<button type="button" class="btn btn-danger" id="del">Delete goal</button>` : ''}
   </main>`;
@@ -234,9 +260,14 @@ export function goalForm(id) {
       if (!name) return toast('Give the goal a name');
       if (!target || target <= 0) return toast('Enter a target amount');
       if (!targetDate) return toast('Pick a date');
+      const [kind, accountId, bucketId] = $('#scope').value.split(':');
+      const scope = kind === 'all' ? {} : kind === 'a' ? { accountId } : { accountId, bucketId };
       update(st => {
-        if (existing) Object.assign(st.goals.find(x => x.id === existing.id), { name, target, targetDate });
-        else st.goals.push({ id: uid(), name, target, targetDate });
+        if (existing) {
+          const goal = st.goals.find(x => x.id === existing.id);
+          delete goal.accountId; delete goal.bucketId;
+          Object.assign(goal, { name, target, targetDate, ...scope });
+        } else st.goals.push({ id: uid(), name, target, targetDate, ...scope });
       });
       toast('Saved');
       go('/setup');

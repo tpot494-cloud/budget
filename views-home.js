@@ -1,9 +1,11 @@
 // views-home.js — the Dashboard and the extra-income form.
 
-import { getState, update, uid } from './store.js';
+import { getState, update, uid, exportBackup } from './store.js';
 import * as C from './calc.js';
 import { fmt, esc, monthLabel, shortDate, pct, bar, go, toast, seg, bindSegs, moneyField, parseMoney } from './ui.js';
 import { debtSummaryCard } from './views-debt.js';
+import { accountOptions, bucketOptions } from './views-savings.js';
+import { recapCard } from './views-recap.js';
 
 const SOURCES = [['bonus', 'Bonus'], ['sale', 'Sold something'], ['other', 'Other']];
 const sourceLabel = v => (SOURCES.find(s => s[0] === v) || SOURCES[2])[1];
@@ -26,6 +28,18 @@ export function dashboard() {
           <a class="btn btn-primary" href="#/setup">Go to Setup</a>
         </section></main>`,
     };
+  }
+
+  // Backup reminder: shown when there's data and no backup in the last 14 days.
+  let backupBanner = '';
+  const lb = s.settings.lastBackupAt;
+  const daysSince = lb ? C.daysBetween(C.todayStr(new Date(lb)), today) : null;
+  if (daysSince === null || daysSince > 14) {
+    backupBanner = `<section class="alert-amber stack-xs">
+      <span class="strong">${daysSince === null ? 'You haven\'t backed up yet' : `Last backup was ${daysSince} days ago`}</span>
+      <span class="small">Your data lives only on this phone. A backup file is your copy if the phone is lost or reset.</span>
+      <button type="button" class="btn-small-wide" id="backupNow">Back up now</button>
+    </section>`;
   }
 
   const billsPct = pct(p.bills, p.pay), budgetsPct = pct(p.budgets, p.pay);
@@ -72,7 +86,7 @@ export function dashboard() {
     <div class="row-between"><span class="strong">Moved to savings</span><span class="num strong">${savedMonth < 0 ? '−' : ''}${fmt(Math.abs(savedMonth))}</span></div>
     ${overs.slice(0, 2).map(o => `<div class="alert-warn">${esc(o.category.name)} is ${fmt(o.spent - o.budget)} over its ${fmt(o.budget)} budget.</div>`).join('')}
     ${overs.length > 2 ? `<div class="alert-warn">${overs.length - 2} more ${overs.length - 2 === 1 ? 'category is' : 'categories are'} over budget.</div>` : ''}
-    <a class="btn btn-outline" href="#/spending">Open spending</a>
+    <div class="grid-2"><a class="btn btn-outline" href="#/spending">Open spending</a><a class="btn btn-outline" href="#/recap?m=${mk}">Month recap</a></div>
   </section>`;
 
   const incomes = C.incomesInMonth(s, mk).sort((a, b) => b.date.localeCompare(a.date));
@@ -90,9 +104,11 @@ export function dashboard() {
     <a class="btn btn-dashed" href="#/income/new">+ Log extra income</a>
   </section>`;
 
-  const weekSaved = C.savedBetween(s, C.weekStart(today), today);
   const goals = s.goals.map((g, gi) => {
-    const gp = C.goalPlan(g, savingsNow, today);
+    const bal = C.goalBalance(s, g);
+    const sc = C.goalScope(g);
+    const weekSaved = C.savedBetween(s, C.weekStart(today), today, sc);
+    const gp = C.goalPlan(g, bal, today);
     let msg;
     if (gp.done) msg = 'Goal reached. Nice work.';
     else if (gp.pastDue) msg = `The target date has passed. Pick a new date in Setup.`;
@@ -100,15 +116,25 @@ export function dashboard() {
     else msg = `Save ${fmt(gp.weekly)} a week for the next ${gp.weeksLeft} ${gp.weeksLeft === 1 ? 'week' : 'weeks'} to hit it on time.`;
     return `<section class="card stack">
       <div class="row-between"><h2>${esc(g.name)}</h2><span class="muted small strong">by ${shortDate(g.targetDate, true)}</span></div>
-      <div class="row-base"><span class="num big">${fmt(Math.min(Math.max(savingsNow, 0), g.target))}</span><span class="muted strong">of ${fmt(g.target)} · ${Math.round(gp.progress * 100)}%</span></div>
+      ${sc ? `<span class="muted small strong">${esc(C.goalScopeLabel(s, g))}</span>` : ''}
+      <div class="row-base"><span class="num big">${fmt(Math.min(Math.max(bal, 0), g.target))}</span><span class="muted strong">of ${fmt(g.target)} · ${Math.round(gp.progress * 100)}%</span></div>
       ${bar(gp.progress * 100, 'thick')}
       <div class="alert-amber">${msg}</div>
       ${gp.weekly ? `<div class="stack-xs"><div class="row-between"><span class="strong small">Saved this week</span><span class="num strong small">${fmt(Math.max(weekSaved, 0))} <span class="muted">of ${fmt(gp.weekly)}</span></span></div>${bar(Math.max(0, Math.min(100, weekSaved / gp.weekly * 100)))}</div>` : ''}
-      ${gi === 0 ? `<a class="btn btn-dashed" href="#/saving-new?k=deposit">+ Add to savings</a>` : ''}
+      <a class="btn btn-dashed" href="#/saving-new?k=deposit${sc ? `&acct=${sc.accountId}${sc.bucketId ? `&b=${sc.bucketId}` : ''}` : ''}">+ Add to savings</a>
     </section>`;
   }).join('');
 
-  return { tab: 'home', html: `${head}<main class="stack">${hero}${tiles}${month}${goals}${debtSummaryCard(s, today)}${extra}</main>` };
+  function mount(root) {
+    root.querySelector('#backupNow')?.addEventListener('click', async () => {
+      const how = await exportBackup();
+      if (how === 'cancelled') return;
+      toast(how === 'shared' ? 'Backup shared' : 'Backup saved to Downloads');
+      go('/home');
+    });
+  }
+
+  return { tab: 'home', mount, html: `${head}<main class="stack">${backupBanner}${recapCard(s, today)}${hero}${tiles}${month}${goals}${debtSummaryCard(s, today)}${extra}</main>` };
 }
 
 export function incomeForm(id) {
@@ -127,12 +153,25 @@ export function incomeForm(id) {
     </div>
     <div class="field"><span class="label">Where it goes</span>${seg('alloc', [['savings', 'Savings'], ['spending', 'Spending money']], inc.allocation, 'Allocation')}
       <span class="help">Savings adds it to your savings total. Spending money shows as extra for that month only.</span></div>
+    <div class="grid-2" id="savingsWhere">
+      <div class="field"${C.accounts(s).length > 1 ? '' : ' hidden'}><label for="acct">Account</label><div class="select"><select id="acct">${accountOptions(s, (C.accounts(s).find(a => a.id === inc.accountId) || C.accounts(s)[0])?.id)}</select></div></div>
+      <div class="field" id="bucketField"><label for="bucket">Bucket</label><div class="select"><select id="bucket">${bucketOptions(C.accounts(s).find(a => a.id === inc.accountId) || C.accounts(s)[0], inc.bucketId)}</select></div></div>
+    </div>
     <button type="button" class="btn btn-primary" id="save">${existing ? 'Save changes' : 'Save income'}</button>
     ${existing ? `<button type="button" class="btn btn-danger" id="del">Delete</button>` : ''}
   </main>`;
 
   function mount(root) {
-    const val = bindSegs(root);
+    const $ = sel => root.querySelector(sel);
+    const acctNow = () => C.accounts(s).find(a => a.id === $('#acct').value);
+    const where = alloc => {
+      const a = acctNow();
+      $('#savingsWhere').hidden = alloc !== 'savings' || (C.accounts(s).length < 2 && !a?.buckets?.length);
+      $('#bucketField').hidden = !a?.buckets?.length;
+    };
+    $('#acct').addEventListener('change', () => { $('#bucket').innerHTML = bucketOptions(acctNow(), null); where('savings'); });
+    const val = bindSegs(root, (n, v) => { if (n === 'alloc') where(v); });
+    where(inc.allocation);
     root.querySelector('#save').addEventListener('click', () => {
       const amount = parseMoney(root.querySelector('#amt').value);
       const date = root.querySelector('#date').value;
@@ -145,6 +184,8 @@ export function incomeForm(id) {
         source: val('source'),
         note: root.querySelector('#note').value.trim(),
         allocation: val('alloc'),
+        accountId: val('alloc') === 'savings' ? $('#acct').value : undefined,
+        bucketId: val('alloc') === 'savings' && acctNow()?.buckets?.length ? ($('#bucket').value || null) : undefined,
       };
       update(st => {
         if (existing) Object.assign(st.incomes.find(i => i.id === existing.id), entry);

@@ -48,7 +48,7 @@ export function purchases(query) {
     const headDay = p.date !== lastDay ? `<h3 class="day">${dayHeading(p.date, today)}</h3>` : '';
     lastDay = p.date;
     return `${headDay}<a class="list-row" href="#/purchase/${p.id}">
-      <span class="stack-2"><span class="strong">${esc(p.note || catName(p.categoryId))}</span><span class="muted small">${esc(catName(p.categoryId))} · ${p.paidWith === 'card' ? 'Card' : 'Debit'}</span></span>
+      <span class="stack-2"><span class="strong">${esc(p.note || (p.splits?.length ? 'Split purchase' : catName(p.categoryId)))}</span><span class="muted small">${p.splits?.length ? 'Split · ' + p.splits.map(x => `${esc(catName(x.categoryId))} ${fmt(x.amount, x.amount % 100 !== 0)}`).join(', ') : esc(catName(p.categoryId))} · ${p.paidWith === 'card' ? 'Card' : 'Debit'}</span></span>
       <span class="num strong">${fmt(p.amount, true)}</span></a>`;
   }).join('');
   const log = `<section class="card">
@@ -97,6 +97,13 @@ export function purchaseForm(id) {
       </div>
       <div class="budget-note" hidden></div>
     </div>
+    <div class="split-box stack-sm" hidden>
+      <div class="row-between"><span class="label strong muted">Split across categories</span><button type="button" class="link-btn small" id="unsplit">Don't split</button></div>
+      <div class="split-rows stack-sm"></div>
+      <button type="button" class="btn btn-dashed" id="addPart">+ Add another category</button>
+      <div class="split-status small strong"></div>
+    </div>
+    <button type="button" class="link-btn small split-toggle" id="split">Split across categories</button>
     <div class="grid-2">
       <div class="field"><label for="date">Date</label><input id="date" type="date" value="${p.date}"></div>
       <div class="field"><label for="note">Note</label><input id="note" type="text" value="${esc(p.note)}" placeholder="What was it?"></div>
@@ -113,7 +120,59 @@ export function purchaseForm(id) {
     const $ = sel => root.querySelector(sel);
     const catSel = $('#cat');
 
+    // ---- Split mode ----
+    const catField = catSel.closest('.field');
+    const splitBox = $('.split-box');
+    const rowsEl = $('.split-rows');
+    const catOptions = sel => options.map(c => `<option value="${c.id}"${c.id === sel ? ' selected' : ''}>${esc(c.name)}${c.archived ? ' (archived)' : ''}</option>`).join('');
+    function addRow(catId, amount) {
+      if (rowsEl.children.length >= 4) return toast('Up to 4 categories');
+      const row = document.createElement('div');
+      row.className = 'split-row';
+      row.innerHTML = `<div class="select"><select class="split-cat" aria-label="Category">${catOptions(catId)}</select></div>
+        <div class="money"><span aria-hidden="true">$</span><input class="split-amt" type="text" inputmode="decimal" aria-label="Amount" placeholder="0.00" value="${amount ? (amount / 100).toFixed(2) : ''}"></div>
+        <button type="button" class="icon-x" aria-label="Remove">×</button>`;
+      row.querySelector('.icon-x').addEventListener('click', () => { if (rowsEl.children.length > 2) { row.remove(); splitStatus(); } else toast('A split needs at least 2 categories'); });
+      row.querySelector('.split-amt').addEventListener('input', splitStatus);
+      rowsEl.appendChild(row);
+      splitStatus();
+    }
+    function readParts() {
+      return [...rowsEl.querySelectorAll('.split-row')].map(r => ({ categoryId: r.querySelector('.split-cat').value, amount: parseMoney(r.querySelector('.split-amt').value) || 0 }));
+    }
+    function splitStatus() {
+      const total = parseMoney($('#amt').value) || 0;
+      const sum = readParts().reduce((t, x) => t + x.amount, 0);
+      const el = $('.split-status');
+      if (sum === total) { el.className = 'split-status small strong accent-text'; el.textContent = total ? 'Adds up to the total.' : ''; }
+      else if (sum < total) { el.className = 'split-status small strong muted'; el.textContent = `${fmt(total - sum, true)} left to assign`; }
+      else { el.className = 'split-status small strong warn-text'; el.textContent = `${fmt(sum - total, true)} more than the total`; }
+    }
+    let splitting = false;
+    function setSplit(on) {
+      splitting = on;
+      splitBox.hidden = !on;
+      catField.hidden = on;
+      $('#split').hidden = on;
+      const rep = $('#repeat')?.closest('.check');
+      if (rep) rep.hidden = on;
+      if (on && !rowsEl.children.length) {
+        const total = parseMoney($('#amt').value) || 0;
+        const first = catSel.value === '__new' ? options[0]?.id : catSel.value;
+        addRow(first, total);
+        addRow(options.find(c => c.id !== first)?.id || first, 0);
+      }
+    }
+    $('#split').addEventListener('click', () => {
+      if (options.length < 2) return toast('Add at least 2 categories first');
+      setSplit(true);
+    });
+    $('#unsplit').addEventListener('click', () => setSplit(false));
+    $('#addPart').addEventListener('click', () => addRow(options.find(c => !readParts().some(x => x.categoryId === c.id))?.id || options[0].id, 0));
+    if (existing?.splits?.length) { existing.splits.forEach(x => addRow(x.categoryId, x.amount)); setSplit(true); }
+
     function refresh() {
+      if (splitting) splitStatus();
       const isNew = catSel.value === '__new';
       $('.new-cat').hidden = !isNew;
       root.querySelectorAll('.chip').forEach(c => c.classList.toggle('on', c.dataset.cat === catSel.value));
@@ -140,7 +199,7 @@ export function purchaseForm(id) {
     $('#date').addEventListener('change', refresh);
     root.querySelectorAll('.chip').forEach(c => c.addEventListener('click', () => { catSel.value = c.dataset.cat; refresh(); }));
     refresh();
-    if (!existing) setTimeout(() => $('#amt').focus(), 50);
+    if (!existing) setTimeout(() => $('#amt')?.focus(), 50);
 
     $('#save').addEventListener('click', () => {
       const amount = parseMoney($('#amt').value);
@@ -149,7 +208,15 @@ export function purchaseForm(id) {
       if (!date) return toast('Pick a date');
       let categoryId = catSel.value;
       let newCat = null;
-      if (categoryId === '__new') {
+      let splits = null;
+      if (splitting) {
+        splits = readParts();
+        if (splits.some(x => x.amount <= 0)) return toast('Give every category an amount, or remove it');
+        if (new Set(splits.map(x => x.categoryId)).size !== splits.length) return toast('Each category can only appear once');
+        if (splits.reduce((t, x) => t + x.amount, 0) !== amount) return toast('The split has to add up to the total');
+        splits.sort((a, b) => b.amount - a.amount);
+        categoryId = splits[0].categoryId;
+      } else if (categoryId === '__new') {
         const name = $('#ncName').value.trim();
         if (!name) return toast('Name the new category');
         if (s.categories.some(c => c.name.toLowerCase() === name.toLowerCase() && !c.archived)) return toast('That category already exists');
@@ -159,7 +226,7 @@ export function purchaseForm(id) {
       const note = $('#note').value.trim();
       const paidWith = val('paid');
 
-      if (!existing && $('#repeat')?.checked) {
+      if (!splitting && !existing && $('#repeat')?.checked) {
         // Turn it into a bill, and mark this month's occurrence as already paid.
         const catNameNow = newCat ? newCat.name : s.categories.find(c => c.id === categoryId)?.name;
         const bill = { id: uid(), name: note || catNameNow || 'Bill', amount, dueDay: Number(date.slice(8, 10)), variable: false, startMonth: C.monthOf(date), endMonth: null };
@@ -174,9 +241,14 @@ export function purchaseForm(id) {
       }
 
       const entry = { id: existing ? existing.id : uid(), date, amount, categoryId, note, paidWith };
+      if (splits) entry.splits = splits;
       update(st => {
         if (newCat) st.categories.push(newCat);
-        if (existing) Object.assign(st.purchases.find(x => x.id === existing.id), entry);
+        if (existing) {
+          const target = st.purchases.find(x => x.id === existing.id);
+          delete target.splits;
+          Object.assign(target, entry);
+        }
         else st.purchases.push(entry);
         st.settings.lastPaidWith = paidWith;
       });

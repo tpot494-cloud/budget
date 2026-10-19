@@ -78,7 +78,7 @@ export function logOccurrence(recId, date, amount) {
   if (!rec || K.logFor(s, rec, date)) return;
   const amt = amount ?? rec.amount;
   update(st => {
-    if (rec.kind === 'saving') st.savingsLog.push({ id: uid(), date, amount: amt, kind: 'deposit', note: rec.note || '', createdAt: new Date().toISOString(), recurringId: rec.id, occDate: date });
+    if (rec.kind === 'saving') st.savingsLog.push({ id: uid(), date, amount: amt, kind: 'deposit', note: rec.note || '', createdAt: new Date().toISOString(), recurringId: rec.id, occDate: date, accountId: rec.accountId || null, bucketId: rec.bucketId || null });
     else st.debtPayments.push({ id: uid(), debtId: rec.debtId, date, amount: amt, recurringId: rec.id, occDate: date });
   });
   toast(rec.kind === 'saving' ? `Saved. Savings total is now ${fmt(C.savingsTotal(getState()))}` : 'Payment logged');

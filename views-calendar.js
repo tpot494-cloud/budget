@@ -137,13 +137,14 @@ export function calendarMonth(query) {
     const ws = C.weekStart(today), we = C.addDays(ws, 6);
     const rows = [];
     if (gw) {
-      const saved = Math.max(0, C.savedBetween(s, ws, today));
+      const sc = C.goalScope(gw.goal);
+      const saved = Math.max(0, C.savedBetween(s, ws, today, sc));
       let planned = 0;
       for (let d = C.addDays(today, 1); d <= we; d = C.addDays(d, 1)) for (const e of (K.eventsBetween(s, d, d, today)[d] || [])) if (e.type === 'planned' && e.kind === 'saving') planned += e.amount;
       const left = Math.max(0, gw.amount - saved - planned);
       const status = saved >= gw.amount ? ' · done' : planned ? ` · ${fmt(planned)} planned later this week` : '';
       rows.push(`<div class="list-row plain-row"><span class="stack-2 grow"><span class="strong">Save for ${esc(gw.goal.name)}</span><span class="small ink2">${fmt(saved)} of ${fmt(gw.amount)} this week${status}</span></span>
-        ${left ? `<a class="btn-small" href="#/saving-new?k=deposit&a=${left}">Log it</a>` : icon.check}</div>`);
+        ${left ? `<a class="btn-small" href="#/saving-new?k=deposit&a=${left}${sc ? `&acct=${sc.accountId}${sc.bucketId ? `&b=${sc.bucketId}` : ''}` : ''}">Log it</a>` : icon.check}</div>`);
     }
     const pe = K.hasRecurring(s, 'debt') ? null : K.planExtra(s, today);
     if (pe) {
@@ -206,11 +207,11 @@ export function calendarWeeks(query) {
 
   let goalCard = '';
   if (gw) {
-    const total = C.savingsTotal(s);
+    const total = C.goalBalance(s, gw.goal);
     const gp = C.goalPlan(gw.goal, total, today);
     const pct = Math.round(gp.progress * 100);
     goalCard = `<section class="card stack-sm">
-      <div class="row-between"><h2>${esc(gw.goal.name)}</h2><span class="small strong accent-text">${fmt(gw.amount)} a week</span></div>
+      <div class="row-between"><h2>${esc(gw.goal.name)}${gw.goal.accountId ? `<span class="muted small"> · ${esc(C.goalScopeLabel(s, gw.goal))}</span>` : ''}</h2><span class="small strong accent-text">${fmt(gw.amount)} a week</span></div>
       <div class="row-base"><span class="num big-mid">${fmt(Math.max(0, Math.min(total, gw.goal.target)))}</span><span class="muted strong">of ${fmt(gw.goal.target)} by ${shortDate(gw.goal.targetDate)}</span></div>
       <div class="bar"><i style="width:${pct}%"></i></div>
       <span class="help">Miss a week and the remaining weeks' target goes up to catch you back up.</span>

@@ -33,6 +33,7 @@ export function emptyState() {
     debts: [],        // { id, name, type, balance (from statement), asOf, apr (%), minPayment, billId }
     debtPayments: [], // extra payments beyond the monthly bill: { id, debtId, date, amount }
     savingsLog: [],   // money moved in or out of savings: { id, date, amount, kind:'deposit'|'withdrawal', note, createdAt, recurringId?, occDate? }
+    savingsAccounts: [{ id: uid(), name: 'Savings', balance: 0, asOf: null, buckets: [] }], // { id, name, balance (from bank), asOf, buckets: [{ id, name }] up to 4 }
     recurring: [],    // planned repeats: { id, kind:'saving'|'debt', debtId?, amount, repeat:'payday'|'weekly'|'monthly', dow, dom, note, startDate, endDate|null }
   };
 }
@@ -92,6 +93,10 @@ export function migrate(data) {
     out.settings.savingsAsOf = new Date().toISOString();
     out.incomes = out.incomes.map(i => (i.allocation === 'savings' ? { ...i, inBalance: true } : i));
   }
+  // Data from before v1.4: one savings number becomes the first savings account.
+  if (!Array.isArray(data.savingsAccounts) || !data.savingsAccounts.length) {
+    out.savingsAccounts = [{ id: uid(), name: 'Savings', balance: out.settings.savings || 0, asOf: out.settings.savingsAsOf || null, buckets: [] }];
+  }
   // A backup with no categories key at all keeps the defaults; an empty list stays empty.
   if (!('categories' in data)) out.categories = base.categories;
   out.schema = SCHEMA;
@@ -100,29 +105,22 @@ export function migrate(data) {
 
 // ---------- Backup ----------
 
-// Uses the phone's share sheet when it can (Save to Files on iPhone; Drive, email
-// or Files on Android). Falls back to a normal download. Returns how it was saved.
-export async function exportBackup({ forceDownload = false } = {}) {
-  const stamp = new Date();
-  const pad = n => String(n).padStart(2, '0');
-  const name = `budget-backup-${stamp.getFullYear()}-${pad(stamp.getMonth() + 1)}-${pad(stamp.getDate())}.json`;
-  const payload = { app: 'budget-app', exportedAt: stamp.toISOString(), data: { ...state, settings: { ...state.settings, lastBackupAt: stamp.toISOString() } } };
-  const text = JSON.stringify(payload, null, 2);
-
+// Saves a file through the phone's share sheet when it can (Save to Files on iPhone;
+// Drive, email or Files on Android), falling back to a normal download.
+// Returns 'shared', 'downloaded' or 'cancelled'.
+export async function shareOrDownload(name, text, type, { forceDownload = false, title = name } = {}) {
   if (!forceDownload && typeof File !== 'undefined' && navigator.canShare) {
-    const file = new File([text], name, { type: 'application/json' });
+    const file = new File([text], name, { type });
     if (navigator.canShare({ files: [file] })) {
       try {
-        await navigator.share({ files: [file], title: 'Budget backup' });
-        markBackedUp(stamp);
+        await navigator.share({ files: [file], title });
         return 'shared';
       } catch (e) {
         if (e && e.name === 'AbortError') return 'cancelled';
-        // Any other share failure: fall through to a download.
       }
     }
   }
-  const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+  const url = URL.createObjectURL(new Blob([text], { type }));
   const a = document.createElement('a');
   a.href = url;
   a.download = name;
@@ -130,8 +128,45 @@ export async function exportBackup({ forceDownload = false } = {}) {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 2000);
-  markBackedUp(stamp);
   return 'downloaded';
+}
+
+const stampName = (prefix, ext, d = new Date()) => {
+  const pad = n => String(n).padStart(2, '0');
+  return `${prefix}-${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}.${ext}`;
+};
+
+export async function exportBackup({ forceDownload = false } = {}) {
+  const stamp = new Date();
+  const payload = { app: 'budget-app', exportedAt: stamp.toISOString(), data: { ...state, settings: { ...state.settings, lastBackupAt: stamp.toISOString() } } };
+  const how = await shareOrDownload(stampName('budget-backup', 'json', stamp), JSON.stringify(payload, null, 2), 'application/json', { forceDownload, title: 'Budget backup' });
+  if (how !== 'cancelled') markBackedUp(stamp);
+  return how;
+}
+
+// Purchases as a CSV file for Excel: one row per category part, so split purchases
+// still add up correctly by category in a pivot table.
+export function purchasesCsv(data) {
+  const cat = id => data.categories.find(c => c.id === id)?.name || 'Uncategorized';
+  const q = v => {
+    const s = String(v ?? '');
+    return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+  const rows = [['Date', 'Month', 'Amount', 'Category', 'Note', 'Paid with', 'Split of total']];
+  const sorted = [...data.purchases].sort((a, b) => a.date.localeCompare(b.date));
+  for (const p of sorted) {
+    const parts = p.splits && p.splits.length ? p.splits : [{ categoryId: p.categoryId, amount: p.amount }];
+    for (const part of parts) {
+      rows.push([p.date, p.date.slice(0, 7), (part.amount / 100).toFixed(2), cat(part.categoryId), p.note || '',
+        p.paidWith === 'card' ? 'Credit card' : 'Debit', parts.length > 1 ? (p.amount / 100).toFixed(2) : '']);
+    }
+  }
+  // The leading BOM tells Excel the file is UTF-8, so names with accents open correctly.
+  return '\ufeff' + rows.map(r => r.map(q).join(',')).join('\r\n') + '\r\n';
+}
+
+export function exportPurchasesCsv() {
+  return shareOrDownload(stampName('budget-purchases', 'csv'), purchasesCsv(state), 'text/csv', { title: 'Budget purchases' });
 }
 
 function markBackedUp(stamp) {

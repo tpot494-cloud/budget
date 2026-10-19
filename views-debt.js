@@ -44,7 +44,7 @@ function emptyState() {
 // Monthly money set aside for goals, so payoff plans can protect it.
 function goalsMonthly(s, today) {
   return s.goals.reduce((t, g) => {
-    const gp = C.goalPlan(g, C.savingsTotal(s), today);
+    const gp = C.goalPlan(g, C.goalBalance(s, g), today);
     return t + (gp.weekly ? Math.round(gp.weekly * 52 / 12) : 0);
   }, 0);
 }
@@ -458,7 +458,7 @@ export function debtPayForm(id) {
     let picker = null;
     bindSegs(root, (n, v) => picker && picker.onSeg(n, v));
     picker = bindRecurring(root);
-    setTimeout(() => root.querySelector('#amt').focus(), 50);
+    setTimeout(() => root.querySelector('#amt')?.focus(), 50);
     root.querySelector('#save').addEventListener('click', () => {
       const amount = parseMoney(root.querySelector('#amt').value);
       const date = root.querySelector('#date').value;

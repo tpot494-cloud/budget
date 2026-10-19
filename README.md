@@ -15,6 +15,7 @@ A private budget app that runs on your phone. Your numbers are saved only on the
 | views-savings.js | Savings total, history, add / take out |
 | calc-cal.js, views-calendar.js | The calendar: paydays, bills, savings, debt payments by day and week |
 | views-recurring.js | One-time vs recurring savings and extra debt payments |
+| views-recap.js | Monthly recap and budget adjustments |
 | views-*.js | One file per area: home, spending, bills, debt, setup |
 | sw.js | Keeps a copy on the phone so it works offline |
 | manifest.webmanifest, icon-*.png | Lets Android install it like an app |
